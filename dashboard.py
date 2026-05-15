@@ -327,45 +327,88 @@ with tab3:
             categories=[t for t in TYPE_ORDER if t in type_grp["소재타입"].values],
             ordered=True
         )
-        type_grp = type_grp.sort_values("소재타입")
+        type_grp = type_grp.sort_values("소재타입").reset_index(drop=True)
 
-        # 히트맵
-        st.subheader("소재 타입별 히트맵 (VID / IMG / CRS / TXT)")
-        hm_cols = [m for m in ["ROAS", "CTR", "CPA", pur_c] if m in type_grp.columns]
+        # ── 소재 타입 카드 ──────────────────────────────────────────────────────
+        st.subheader("소재 타입별 성과 카드")
 
-        if hm_cols and len(type_grp) > 0:
-            hm_raw  = type_grp.set_index("소재타입")[hm_cols].astype(float)
-            hm_norm = hm_raw.copy()
-            for col in hm_norm.columns:
-                lo, hi = hm_norm[col].min(), hm_norm[col].max()
-                if hi > lo:
-                    n = (hm_norm[col] - lo) / (hi - lo)
-                    hm_norm[col] = 1 - n if col == "CPA" else n  # CPA는 낮을수록 좋음
+        # ROAS 기준 TOP 타입 결정
+        top_type = type_grp.loc[type_grp["ROAS"].idxmax(), "소재타입"] if "ROAS" in type_grp.columns else None
+
+        TYPE_BADGE_CSS = {
+            "VID": "background:#dbeafe;color:#1d4ed8",
+            "IMG": "background:#fef3c7;color:#92400e",
+            "CRS": "background:#ede9fe;color:#6d28d9",
+            "TXT": "background:#dcfce7;color:#166534",
+            "기타": "background:#f1f5f9;color:#475569",
+        }
+
+        def roas_color(roas, max_roas):
+            ratio = roas / max_roas if max_roas else 0
+            if ratio >= 0.85: return "#4ade80"
+            if ratio >= 0.6:  return "#86efac"
+            if ratio >= 0.4:  return "#fde68a"
+            return "#fca5a5"
+
+        def cpa_color(cpa, min_cpa):
+            if min_cpa == 0: return "#e2e8f0"
+            ratio = min_cpa / cpa if cpa else 0
+            if ratio >= 0.9:  return "#4ade80"
+            if ratio >= 0.75: return "#86efac"
+            if ratio >= 0.55: return "#fde68a"
+            return "#fca5a5"
+
+        max_roas = type_grp["ROAS"].max() if "ROAS" in type_grp.columns else 1
+        min_cpa  = type_grp["CPA"].min()  if "CPA"  in type_grp.columns else 0
+
+        cols = st.columns(len(type_grp))
+        for i, row in type_grp.iterrows():
+            t = str(row["소재타입"])
+            is_top = (t == top_type)
+            badge_css = TYPE_BADGE_CSS.get(t, TYPE_BADGE_CSS["기타"])
+            rc = roas_color(row.get("ROAS", 0), max_roas)
+            cc = cpa_color(row.get("CPA", 0), min_cpa)
+
+            with cols[i]:
+                # TOP 배지
+                if is_top:
+                    st.markdown(
+                        "<div style='text-align:center;margin-bottom:4px'>"
+                        "<span style='background:#4ade80;color:#0f1117;font-size:11px;"
+                        "font-weight:700;padding:2px 10px;border-radius:4px'>⭐ TOP</span></div>",
+                        unsafe_allow_html=True,
+                    )
                 else:
-                    hm_norm[col] = 0.5
+                    st.markdown("<div style='margin-bottom:22px'></div>", unsafe_allow_html=True)
 
-            def fmt_cell(val, col):
-                if col == "CTR":  return f"{val:.2f}%"
-                if col == "ROAS": return f"{val:.0f}%"
-                if col == "CPA":  return f"₩{val:,.0f}"
-                return f"{val:,.0f}"
+                border = "2px solid #4ade80" if is_top else "1px solid #e2e8f0"
+                st.markdown(
+                    f"<div style='border:{border};border-radius:12px;padding:16px;text-align:center'>"
+                    f"<span style='{badge_css};font-size:13px;font-weight:700;"
+                    f"padding:3px 12px;border-radius:6px'>{t}</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
-            text_vals = [[fmt_cell(hm_raw.loc[r, c], c) for c in hm_raw.columns]
-                         for r in hm_raw.index]
-            col_labels = {"ROAS": "ROAS", "CTR": "CTR", "CPA": "CPA (낮을수록↑)", pur_c: "구매(건)"}
+                # ROAS — 큰 숫자
+                roas_val = row.get("ROAS", 0)
+                st.markdown(
+                    f"<div style='text-align:center;margin:8px 0 4px'>"
+                    f"<div style='font-size:11px;color:#94a3b8'>ROAS</div>"
+                    f"<div style='font-size:32px;font-weight:700;color:{rc}'>{roas_val:.0f}%</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
-            fig = go.Figure(go.Heatmap(
-                z=hm_norm.values,
-                x=[col_labels.get(c, c) for c in hm_norm.columns],
-                y=hm_norm.index.tolist(),
-                colorscale=[[0, "#fca5a5"], [0.5, "#fef9c3"], [1, "#86efac"]],
-                showscale=False,
-                text=text_vals,
-                texttemplate="%{text}",
-                textfont={"size": 15, "color": "#1e293b"},
-            ))
-            fig.update_layout(height=240, margin=dict(t=10, b=10, l=70))
-            st.plotly_chart(fig, use_container_width=True)
+                # CTR / CPA / 구매 서브 지표
+                ctr_val = row.get("CTR", 0)
+                cpa_val = row.get("CPA", 0)
+                pur_val = row.get(pur_c, 0) if pur_c in type_grp.columns else 0
+
+                c1, c2 = st.columns(2)
+                c1.metric("CTR",  f"{ctr_val:.2f}%")
+                c2.metric("CPA",  f"₩{cpa_val:,.0f}")
+                st.metric("구매", f"{int(pur_val):,}건")
 
         st.divider()
 
