@@ -7,7 +7,14 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="마케팅 성과 대시보드", layout="wide", page_icon="📊")
 
-DATA_DIR = Path(__file__).parent
+import os
+
+# Streamlit Cloud에서 __file__ 경로가 다를 수 있어 resolve()로 절대경로 사용
+DATA_DIR = Path(__file__).resolve().parent
+# fallback: cwd도 확인해서 data/ 있는 쪽 사용
+if not (DATA_DIR / "data").exists():
+    DATA_DIR = Path(os.getcwd())
+
 CHANNEL_DIR = DATA_DIR / "data" / "channel"
 AF_DIR = DATA_DIR / "data" / "appsflyer"
 
@@ -113,7 +120,11 @@ def wk_delta_str(curr, prev, hib=True):
 df = load_data()
 
 if df.empty:
-    st.error("데이터 없음 — data/channel/ 과 data/appsflyer/ 폴더에 CSV를 넣어주세요.")
+    st.error("데이터 없음 — CSV 파일을 찾을 수 없습니다.")
+    with st.expander("🔍 경로 디버그"):
+        st.code(f"DATA_DIR: {DATA_DIR}\nCHANNEL_DIR: {CHANNEL_DIR}\nAF_DIR: {AF_DIR}\n"
+                f"channel files: {list(CHANNEL_DIR.glob('*_channel.csv')) if CHANNEL_DIR.exists() else 'directory not found'}\n"
+                f"af files: {list(AF_DIR.glob('*_appsflyer.csv')) if AF_DIR.exists() else 'directory not found'}")
     st.stop()
 
 # ── 사이드바 필터 ─────────────────────────────────────────────────────────────
