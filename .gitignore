@@ -1,0 +1,19 @@
+# 데이터 파일 (개인 마케팅 데이터 — GitHub에 올리지 않음)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 기타
+.superpowers/
+*.xlsx
+*.json
+*.zip
+cat_16x9.png
+coupang_*.py
+make_xlsx.py
+remotion-promo/
+god-tibo-imagen/
