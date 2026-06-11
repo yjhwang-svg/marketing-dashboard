@@ -65,6 +65,12 @@ div.stButton > button:active { transform:scale(0.99); }
 div.stButton > button p { color:#fff !important; font-weight:700 !important; }
 
 .stProgress > div > div > div > div { background:%s !important; }
+
+/* 폰트 override로 깨진 Streamlit 기본(Material) 아이콘 숨김 — expander 펼침 화살표 등 */
+[data-testid="stExpanderToggleIcon"],
+details summary [data-testid="stIconMaterial"],
+.streamlit-expanderHeader svg { display:none !important; }
+[data-testid="stExpander"] summary { padding-left:14px !important; }
 </style>
 """ % (BLUE, BLUE, BLUE, BLUE, BLUE, BLUE), unsafe_allow_html=True)
 
@@ -202,7 +208,7 @@ if run:
             len(rows), start_row, end_row, "  →  ".join(STEP_LABELS[s] for s in steps)),
         unsafe_allow_html=True)
 
-    results, files = [], []
+    results, files, blocked = [], [], []
     progress = st.progress(0.0)
     log = st.container()
 
@@ -239,6 +245,8 @@ if run:
                         st.success("엑셀 · {}".format(r['msg']))
                 elif r.get('blocked'):
                     rec["엑셀"] = "⛔"; st.error("엑셀 · {}".format(r['msg']))
+                    blocked.append({'row': rn, 'reason': r.get('reason'),
+                                    'missing': r.get('missing', []), 'need': r.get('need', [])})
                 else:
                     rec["엑셀"] = "❌"; st.error("엑셀 · {}".format(r['msg']))
           except Exception as e:
@@ -249,6 +257,33 @@ if run:
 
     st.markdown("<div style='font-size:15px;font-weight:700;color:#191F28;margin:18px 0 8px;'>실행 결과</div>", unsafe_allow_html=True)
     st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+
+    # 3번이 막힌 경우 → 상황별 안내 문구 (variation)
+    if blocked:
+        def fmt_rows(rs):
+            rs = sorted(set(rs))
+            return ', '.join(str(r) for r in rs) + '행'
+        # (1) S~AB 빈 셀 때문에 막힌 경우: 컬럼별로 묶기
+        by_col = {}
+        for b in blocked:
+            if b['reason'] == 'cells':
+                for lab in b['missing']:
+                    by_col.setdefault(lab, []).append(b['row'])
+        # (2) 1·2번 미실행으로 막힌 경우
+        prereq_rows = [b['row'] for b in blocked if b['reason'] == 'prereq']
+
+        tips = []
+        for lab, rs in by_col.items():
+            tips.append("{}의 <b>{}</b> 열을 채운 뒤 STEP 3를 다시 실행해주세요".format(fmt_rows(rs), lab))
+        if prereq_rows:
+            tips.append("{}은 <b>STEP 1·2(이미지·에어브릿지)</b>를 먼저 실행한 뒤 STEP 3를 다시 실행해주세요".format(fmt_rows(prereq_rows)))
+
+        body = "<br>".join("· " + t for t in tips)
+        st.markdown(
+            "<div style='background:#FFF4E5;border:1px solid #FFE0B2;border-radius:12px;"
+            "padding:14px 16px;margin-top:10px;font-size:13.5px;color:#8A5300;line-height:1.7;'>"
+            "<b><i class='ti ti-alert-triangle'></i> 엑셀 파일이 생성되지 않은 행이 있어요</b><br>{}</div>".format(body),
+            unsafe_allow_html=True)
 
     if files:
         st.markdown("<div style='font-size:15px;font-weight:700;color:#191F28;margin:18px 0 8px;'>생성된 엑셀 파일 (공유 드라이브 저장 완료)</div>", unsafe_allow_html=True)

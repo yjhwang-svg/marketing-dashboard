@@ -430,11 +430,11 @@ def process_excel(token, tab, row_num, row, dest_folder_id=None):
     if not cell(row, 'T_link'):
         need.append('2번(에어브릿지 링크)')
     if need:
-        return {'ok': False, 'blocked': True,
+        return {'ok': False, 'blocked': True, 'reason': 'prereq', 'need': need,
                 'msg': '{}행: {} 가 먼저 실행되어야 합니다 (해당 셀 비어있음)'.format(row_num, ' · '.join(need))}
     missing = validate_sab(row)
     if missing:
-        return {'ok': False, 'blocked': True,
+        return {'ok': False, 'blocked': True, 'reason': 'cells', 'missing': missing,
                 'msg': '{}행: {} 비어있음 → 채워주세요'.format(row_num, ', '.join(missing))}
 
     campaign = campaign_from_link(cell(row, 'T_link'))
