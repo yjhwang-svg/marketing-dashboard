@@ -181,6 +181,79 @@ def drive_upload(token, name, data_bytes, folder_id, mime='application/vnd.openx
         return json.loads(r.read()).get('webViewLink', '')
 
 
+# ── 드라이브 폴더 해석/생성 ───────────────────────────────────────
+def extract_folder_id(spec):
+    """폴더 URL 또는 ID 문자열에서 ID 추출 (없으면 None)"""
+    s = (spec or '').strip()
+    m = re.search(r'/folders/([A-Za-z0-9_-]+)', s) or re.search(r'[?&]id=([A-Za-z0-9_-]+)', s)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r'[A-Za-z0-9_-]{15,}', s):
+        return s
+    return None
+
+def _drive_get(token, fid, fields='id,name,driveId,mimeType'):
+    url = 'https://www.googleapis.com/drive/v3/files/{}?supportsAllDrives=true&fields={}'.format(fid, fields)
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization':'Bearer '+token}), timeout=15) as r:
+        return json.loads(r.read())
+
+def _find_child_folder(token, drive_id, parent, name):
+    q = ("name='{}' and '{}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+         ).format(name.replace("'", "\\'"), parent)
+    url = ('https://www.googleapis.com/drive/v3/files?q={}&corpora=drive&driveId={}'
+           '&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id,name)').format(
+        urllib.parse.quote(q), drive_id)
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization':'Bearer '+token}), timeout=15) as r:
+        fs = json.loads(r.read()).get('files', [])
+    return fs[0]['id'] if fs else None
+
+def _create_folder(token, parent, name):
+    body = json.dumps({'name': name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent]}).encode()
+    url = 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id'
+    req = urllib.request.Request(url, data=body, method='POST',
+        headers={'Authorization':'Bearer '+token, 'Content-Type':'application/json'})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())['id']
+
+def resolve_drive_folder(token, drive_root, spec):
+    """저장 폴더 결정. spec이:
+    - 비어있으면 → 공유 드라이브 최상위(drive_root)
+    - 폴더 URL/ID → 그 폴더 (공유 드라이브 소속인지 확인)
+    - 폴더명/경로(a/b) → drive_root 아래에서 찾고 없으면 생성
+    반환: {'ok':bool, 'id':folder_id, 'name':표시명, 'msg':err}
+    """
+    spec = (spec or '').strip()
+    if not spec:
+        return {'ok': True, 'id': drive_root, 'name': '(공유 드라이브 최상위)'}
+
+    fid = extract_folder_id(spec)
+    if fid:
+        try:
+            meta = _drive_get(token, fid)
+        except urllib.error.HTTPError as e:
+            return {'ok': False, 'msg': '폴더 접근 불가({}). 공유 드라이브 내 폴더인지/서비스계정 공유됐는지 확인하세요.'.format(e.code)}
+        if meta.get('mimeType') != 'application/vnd.google-apps.folder':
+            return {'ok': False, 'msg': '폴더가 아닙니다 (파일 링크인 듯).'}
+        if not meta.get('driveId'):
+            return {'ok': False, 'msg': '개인 드라이브 폴더입니다. 서비스계정은 공유 드라이브에만 저장 가능합니다.'}
+        return {'ok': True, 'id': meta['id'], 'name': meta.get('name', fid)}
+
+    # 경로/이름으로 처리 (없으면 생성)
+    try:
+        parent = drive_root
+        segs = [s.strip() for s in re.split(r'[\\/]+', spec) if s.strip()]
+        for seg in segs:
+            child = _find_child_folder(token, drive_root, parent, seg)
+            if not child:
+                child = _create_folder(token, parent, seg)
+            parent = child
+        return {'ok': True, 'id': parent, 'name': '/'.join(segs)}
+    except urllib.error.HTTPError as e:
+        return {'ok': False, 'msg': '폴더 생성/조회 실패({})'.format(e.code)}
+    except Exception as e:
+        return {'ok': False, 'msg': '폴더 처리 오류: {}'.format(str(e)[:100])}
+
+
 # ── 유틸 ──────────────────────────────────────────────────────────
 def cell(row, key):
     i = COL[key]
@@ -349,8 +422,8 @@ def build_xlsx_bytes(row):
     buf = BytesIO(); wb.save(buf)
     return buf.getvalue()
 
-def process_excel(token, tab, row_num, row):
-    """S~AB 검증 → xlsx 생성 → 공유 드라이브 업로드 → AC='파일생성완료'."""
+def process_excel(token, tab, row_num, row, dest_folder_id=None):
+    """S~AB 검증 → xlsx 생성 → 공유 드라이브(또는 지정 폴더) 업로드 → AC='파일생성완료'."""
     need = []
     if not cell(row, 'AB_img'):
         need.append('1번(이미지 링크)')
@@ -368,7 +441,7 @@ def process_excel(token, tab, row_num, row):
     if not campaign:
         return {'ok': False, 'msg': 'T열 링크에서 campaign 값 추출 실패'}
 
-    drive_id = get_config()['drive']
+    drive_id = dest_folder_id or get_config()['drive']
     try:
         data = build_xlsx_bytes(row)
     except Exception as e:

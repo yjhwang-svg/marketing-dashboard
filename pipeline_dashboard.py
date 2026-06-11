@@ -155,6 +155,16 @@ st.markdown(
     "엑셀은 해당 행의 S~AB가 모두 채워져야 실행되며, 완료 시 <b>공유 드라이브</b>에 저장됩니다. 이미지·에어브릿지 결과가 없으면 오류가 표시됩니다.</div>",
     unsafe_allow_html=True)
 
+# ── ③ 저장 폴더 (공유 드라이브 내) ────────────────────────────────
+with st.container(border=True):
+    shead("ti-folder", "엑셀 저장 폴더", "공유 드라이브 내")
+    st.markdown(
+        "<div class='desc-line'>비워두면 공유 드라이브 최상위에 저장됩니다. "
+        "폴더 링크/ID를 붙여넣거나, 폴더명(예: <b>2026-06/토스</b>)을 입력하면 해당 폴더에 저장돼요 (없으면 자동 생성).</div>",
+        unsafe_allow_html=True)
+    folder_spec = st.text_input("저장 폴더", value="", placeholder="예: 2026-06/토스  또는  폴더 링크",
+                                label_visibility="collapsed")
+
 run = st.button("실행하기")
 steps = [s for s in [1, 2, 3] if toggles[s]]
 
@@ -172,6 +182,18 @@ if run:
     with st.spinner("시트 로딩 중..."):
         tgt = pc.load_target(token, ttab)
         src = pc.load_source(token, stab) if 2 in steps else []
+
+    # 저장 폴더 해석 (3번 실행 시)
+    dest_folder_id = None
+    if 3 in steps:
+        fr = pc.resolve_drive_folder(token, pc.get_config()['drive'], folder_spec)
+        if not fr['ok']:
+            st.error("저장 폴더 오류 · {}".format(fr['msg'])); st.stop()
+        dest_folder_id = fr['id']
+        st.markdown(
+            "<div style='font-size:12.5px;color:#8B95A1;margin:2px 0;'>"
+            "<i class='ti ti-folder'></i> 저장 위치: <b>{}</b></div>".format(fr['name']),
+            unsafe_allow_html=True)
 
     rows = list(range(int(start_row), int(end_row) + 1))
     st.markdown(
@@ -208,7 +230,7 @@ if run:
                     rec["에어브릿지"] = "❌"; st.error("에어브릿지 · {}".format(r['msg']))
 
             if 3 in steps:
-                r = pc.process_excel(token, ttab, rn, row)
+                r = pc.process_excel(token, ttab, rn, row, dest_folder_id=dest_folder_id)
                 if r['ok']:
                     rec["엑셀"] = "✅"; files.append((r['campaign'], r.get('link', ''), r.get('data')))
                     if r.get('link'):
