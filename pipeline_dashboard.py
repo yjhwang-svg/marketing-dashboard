@@ -88,10 +88,11 @@ def pad(row, n=29):
     return row + [''] * (n - len(row)) if len(row) < n else row
 
 
-@st.cache_resource(show_spinner=False)
-def boot():
+@st.cache_resource(show_spinner=False, ttl=1800)
+def boot_tabs():
+    """탭 이름만 캐시 (변하지 않음). 토큰은 만료되므로 캐시하지 않는다."""
     token = pc.get_token()
-    return token, pc.get_tab(token, pc.TARGET_ID, pc.TARGET_GID), pc.get_tab(token, pc.SOURCE_ID, pc.SOURCE_GID)
+    return pc.get_tab(token, pc.TARGET_ID, pc.TARGET_GID), pc.get_tab(token, pc.SOURCE_ID, pc.SOURCE_GID)
 
 
 def shead(icon, title, sub=""):
@@ -181,7 +182,8 @@ if run:
     if not steps:
         st.warning("실행할 작업을 1개 이상 선택하세요."); st.stop()
     try:
-        token, ttab, stab = boot()
+        token = pc.get_token()          # 매 실행마다 새 토큰 (1시간 만료 방지)
+        ttab, stab = boot_tabs()
     except Exception as e:
         st.error("초기화(인증/시트) 실패: {}".format(e)); st.stop()
 
