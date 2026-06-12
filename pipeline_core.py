@@ -337,7 +337,8 @@ def process_image(token, tab, row_num, row):
 
 
 # ── 2) 에어브릿지 링크 ────────────────────────────────────────────
-def resolve_campaign(source_rows, prod_id, start_yymmdd, end_yymmdd):
+def resolve_source_row(source_rows, prod_id, start_yymmdd, end_yymmdd):
+    """소스 시트에서 상품ID+날짜로 매칭된 행 전체 반환 (없으면 None)"""
     for r in source_rows:
         g = (r[6] if len(r) > 6 else '').strip()
         h = (r[7] if len(r) > 7 else '').strip()
@@ -346,18 +347,18 @@ def resolve_campaign(source_rows, prod_id, start_yymmdd, end_yymmdd):
         parts = g.split('_')
         if (lo_id(h) == prod_id and len(parts) >= 2
                 and parts[0] == start_yymmdd and parts[1] == end_yymmdd):
-            return g
+            return r
     for r in source_rows:
         g = (r[6] if len(r) > 6 else '').strip()
         parts = g.split('_')
         if len(parts) >= 2 and parts[0] == start_yymmdd and parts[1] == end_yymmdd:
             h = (r[7] if len(r) > 7 else '').strip()
             if prod_id and prod_id in h:
-                return g
+                return r
     return None
 
-def airbridge_create(campaign, fallback):
-    deeplink = 'onlotte://webview?url=' + urllib.parse.quote(fallback, safe='')
+def airbridge_create(campaign, deeplink, fallback):
+    """deeplink=소스 N열, fallback=소스 M열 을 그대로 사용 (트래킹 파라미터 포함 버전)."""
     payload = {
         'channel': AB_CHANNEL,
         'campaignParams': {'campaign': campaign},
@@ -373,6 +374,9 @@ def airbridge_create(campaign, fallback):
     tl = res['data']['trackingLink']
     return tl['link']['click'], tl.get('shortUrl', '')
 
+# M/N이 아직 준비 안 된 행을 가리키는 placeholder
+_PLACEHOLDER_MARKERS = ['채널코드 업데이트 필요', '채널코드', '업데이트 필요']
+
 def process_airbridge(token, tab, row_num, row, source_rows):
     j = cell(row, 'J_url')
     pid = lo_id(j)
@@ -380,13 +384,22 @@ def process_airbridge(token, tab, row_num, row, source_rows):
     end = iso_to_yymmdd(cell(row, 'L_end'))
     if not (j and start and end):
         return {'ok': False, 'msg': 'J/K/L(상품URL·날짜) 누락'}
-    campaign = resolve_campaign(source_rows, pid, start, end)
-    if not campaign:
-        return {'ok': False, 'msg': '소스시트에서 캠페인코드 매칭 실패 (상품ID={} {}~{})'.format(pid, start, end)}
-    base = j.split('?')[0]
-    fallback = '{}?mall_no=1&utm_source={}&utm_campaign={}'.format(base, AB_CHANNEL, campaign)
+    srow = resolve_source_row(source_rows, pid, start, end)
+    if not srow:
+        return {'ok': False, 'msg': '소스시트에서 매칭 실패 (상품ID={} {}~{})'.format(pid, start, end)}
+
+    campaign = (srow[6] if len(srow) > 6 else '').strip()    # G
+    fallback = (srow[12] if len(srow) > 12 else '').strip()  # M열 (웹 폴백 URL)
+    deeplink = (srow[13] if len(srow) > 13 else '').strip()  # N열 (딥링크)
+
+    if not fallback or not deeplink:
+        return {'ok': False, 'msg': '소스시트 M/N(폴백·딥링크)이 비어있음 (캠페인 {})'.format(campaign)}
+    if any(mk in fallback or mk in deeplink for mk in _PLACEHOLDER_MARKERS):
+        return {'ok': False,
+                'msg': '소스시트 M/N에 "채널코드 업데이트 필요" placeholder가 남아있음 → 채널코드 업데이트 후 다시 실행 (캠페인 {})'.format(campaign)}
+
     try:
-        long_link, short = airbridge_create(campaign, fallback)
+        long_link, short = airbridge_create(campaign, deeplink, fallback)
         sheets_write_cell(token, TARGET_ID, "'{}'!T{}".format(tab, row_num), long_link)
         return {'ok': True, 'msg': '링크 생성 완료 ({})'.format(campaign),
                 'link': long_link, 'short': short, 'campaign': campaign}
